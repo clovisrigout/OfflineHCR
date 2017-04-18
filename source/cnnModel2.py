@@ -4,7 +4,7 @@ import cPickle as pickle # to load object to disk
 import sys
 import math
 from hmmlearn import hmm
-from nltk.corpus import words
+from nltk.corpus import words as englishWords
 
 from data import Data
 from data import CUSTOM_GENERATION, DATA_OBJECT_PATHS
@@ -12,12 +12,12 @@ from data import CUSTOM_GENERATION, DATA_OBJECT_PATHS
 WIDTH = 28
 HEIGHT = 28
 
-ITERATIONS = 1000
-NB_NEURONS_F = 2048
-NB_NEURONS_2 = 256
-LEARNING_RATE = 1e-5
+ITERATIONS = 30000
+NB_NEURONS_F = 120
+NB_NEURONS_2 = 100
+LEARNING_RATE = 1e-4
 
-TRAIN_MODEL = False
+TRAIN_MODEL = True
 
 alphabet = ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"]
 
@@ -43,6 +43,9 @@ def bias_variable(shape):
 # The convolution uses a stride of one and are zero padded so that the output is the same size as the input.
 def conv2d(x, W):
 	return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
+
+def conv2d_Valid(x, W):
+	return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='VALID')
 
 #Our pooling is plain old max pooling over 2x2 blocks
 #output divides size by two
@@ -130,46 +133,61 @@ def getAccuracy(pred, word):
 
 def main():
 
+ # see https://www.tensorflow.org/tutorials/layers#input_layer
 	x = tf.placeholder(tf.float32, shape=[None, WIDTH,HEIGHT]) 
 	y_ = tf.placeholder(tf.float32, shape=[None, 26])
 
-	x_image = tf.reshape(x, [-1,WIDTH,HEIGHT,1]) #reshape to tensor
+	input_layer = tf.reshape(x, [-1,WIDTH,HEIGHT,1]) #reshape to tensor
 
-	W_conv1 = weight_variable([5, 5, 1, 32])
-	b_conv1 = bias_variable([32])
+	conv1 = tf.layers.conv2d(
+	    inputs=input_layer,
+	    filters=6,
+	    kernel_size=[5, 5],
+	    padding="same",
+	    activation=tf.nn.relu
+	)
 
-	h_conv1 = tf.nn.relu(conv2d(x_image, W_conv1) + b_conv1)
-	h_pool1 = max_pool_2x2(h_conv1)
+	pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
 
-	W_conv2 = weight_variable([5, 5, 32, NB_NEURONS_2])
-	b_conv2 = bias_variable([NB_NEURONS_2])
+	conv2 = tf.layers.conv2d(
+	    inputs=pool1,
+	    filters=16,
+	    kernel_size=[5, 5],
+	    padding="valid",
+	    activation=tf.nn.relu
+	)
 
-	h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2)
-	h_pool2 = max_pool_2x2(h_conv2)
+	pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
 
-	W_fc1 = weight_variable([(WIDTH/2/2) * (HEIGHT/2/2) * NB_NEURONS_2, NB_NEURONS_F])
-	b_fc1 = bias_variable([NB_NEURONS_F])
+	pool2_flat = tf.reshape(pool2, [-1, 5 * 5 * 16])
 
-	h_pool2_flat = tf.reshape(h_pool2, [-1, (WIDTH/2/2)*(HEIGHT/2/2)*NB_NEURONS_2])
-	h_fc1 = tf.nn.relu(tf.matmul(h_pool2_flat, W_fc1) + b_fc1)
+	dense1 = tf.layers.dense(inputs=pool2_flat, units=NB_NEURONS_2, activation=tf.nn.relu)
+
+	dense2 = tf.layers.dense(inputs=dense1, units=NB_NEURONS_F, activation=tf.nn.relu)
 
 	keep_prob = tf.placeholder(tf.float32)
-	h_fc1_drop = tf.nn.dropout(h_fc1, keep_prob)
+	dropout = tf.layers.dropout(
+	    inputs=dense2, rate=keep_prob
+	)
 
-	W_fc2 = weight_variable([NB_NEURONS_F, 26])
-	b_fc2 = bias_variable([26])
+	logits = tf.layers.dense(inputs=dropout, units=26)
 
-	y_conv = tf.matmul(h_fc1_drop, W_fc2) + b_fc2
+	predictions = {
+	    "classes": tf.argmax(
+	        input=logits, axis=1),
+	    "probabilities": tf.nn.softmax(
+	        logits, name="softmax_tensor")
+	}
 
-	cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=y_conv, labels=y_))
-	train_step = tf.train.AdamOptimizer(LEARNING_RATE).minimize(cross_entropy)
-	# train_step = tf.train.GradientDescentOptimizer(0.5).minimize(cross_entropy)
-	correct_prediction = tf.equal(tf.argmax(y_conv,1), tf.argmax(y_,1))
+	loss = tf.losses.softmax_cross_entropy(logits=logits, onehot_labels=y_)
+	train_step = tf.train.AdamOptimizer(LEARNING_RATE).minimize(loss)
+	# train_step = tf.train.GradientDescentOptimizer(0.5).minimize(loss)
+	correct_prediction = tf.equal(tf.argmax(logits,1), tf.argmax(y_,1))
 	accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 	initializer = tf.global_variables_initializer()
 
 	def getPredictions(X):
-		return y_conv.eval(feed_dict={x: X, keep_prob: 1})
+		return logits.eval(feed_dict={x: X, keep_prob: 1})
 
 	def predict(X):
 		X = [X]
@@ -248,7 +266,11 @@ def main():
 					train_accuracy = accuracy.eval(feed_dict={x:batch[0], y_: batch[1], keep_prob: 1})
 					print("step %d, training accuracy %g"%(i, train_accuracy))
 
-				train_step.run(feed_dict={x: batch[0], y_: batch[1], keep_prob: .6})
+				train_step.run(feed_dict={x: batch[0], y_: batch[1], keep_prob: 0.5})
+
+			train_accuracy = accuracy.eval(feed_dict={x:batch[0], y_:batch[1], keep_prob: 1})
+
+			print("train_accuracy %g"%train_accuracy)
 
 			testAccuracy = accuracy.eval(feed_dict={x: data.testX, y_: data.testY, keep_prob: 1.0})
 
@@ -263,77 +285,90 @@ def main():
 
 			# Save the variables to disk.
 			if(CUSTOM_GENERATION):
-				save_path = saver.save(sess, "./../models/model_with_gen_{}_{}_{}.ckpt".format(NB_NEURONS_2, NB_NEURONS_F, ITERATIONS))
+				save_path = saver.save(sess, "./../models/model_2_with_gen_{}_{}_{}.ckpt".format(NB_NEURONS_2, NB_NEURONS_F, ITERATIONS))
 			else:
-				save_path = saver.save(sess, "./../models/model_{}_{}_{}.ckpt".format(NB_NEURONS_2, NB_NEURONS_F, ITERATIONS))
+				save_path = saver.save(sess, "./../models/model_2_{}_{}_{}.ckpt".format(NB_NEURONS_2, NB_NEURONS_F, ITERATIONS))
 		else:
 			if(CUSTOM_GENERATION):
-				saver.restore(sess, "../models/model_with_gen_{}_{}_{}.ckpt".format(NB_NEURONS_2,NB_NEURONS_F, ITERATIONS))
+				saver.restore(sess, "../models/model_2_with_gen_{}_{}_{}.ckpt".format(NB_NEURONS_2,NB_NEURONS_F, ITERATIONS))
 			else:
-				saver.restore(sess, "../models/model_{}_{}_{}.ckpt".format(NB_NEURONS_2,NB_NEURONS_F, ITERATIONS))
-			# handwritingAccuracy = accuracy.eval(feed_dict={x: data.handwritingX, y_: data.handwritingY, keep_prob: 1})
-			# print("handwritingAccuracy: %g"%handwritingAccuracy)
-			# predictions = getPredictions(data.handwritingX)
-			# # emissionProbs = getEmissionProbs_fast(data.testX, data.testY)
-			# # print("EMISSIONS:")
-			# # print(len(emissionProbs))
-			# # print(emissionProbs)
-			# # print(emissionProbs[0])
+				saver.restore(sess, "../models/model_2_{}_{}_{}.ckpt".format(NB_NEURONS_2,NB_NEURONS_F, ITERATIONS))
+			handwritingAccuracy = accuracy.eval(feed_dict={x: data.handwritingX, y_: data.handwritingY, keep_prob: 1})
+			print("handwritingAccuracy: %g"%handwritingAccuracy)
+			predictions = getPredictions(data.handwritingX)
+			# emissionProbs = getEmissionProbs_fast(data.testX, data.testY)
+			# print("EMISSIONS:")
+			# print(len(emissionProbs))
+			# print(emissionProbs)
+			# print(emissionProbs[0])
 
-			# print(len(predictions))
-			# print(len(data.handwritingY))
-			# # for prediction, actual in zip(predictions, data.handwritingY):
-			# # 	print(prediction)
-			# # 	print(actual)
-			# # 	print(np.matmul(np.transpose(prediction), actual))
-			# # 	print([sigmoid(x) for x in prediction])
+			print(len(predictions))
+			print(len(data.handwritingY))
+			# for prediction, actual in zip(predictions, data.handwritingY):
+			# 	print(prediction)
+			# 	print(actual)
+			# 	print(np.matmul(np.transpose(prediction), actual))
+			# 	print([sigmoid(x) for x in prediction])
 
-			# with open('../data/testText.txt', 'rb') as file:
-			# 	index = 0
-			# 	dictionary = set()
-			# 	for line in file:
-			# 		words = line.split()
-			# 		for word in words:
-			# 			dictionary.add(word)
-			# print("DICTONARY")
-			# print dictionary
-			# prefixes = set()
-			# for w in dictionary:
-			# 	prefixSet = getPrefixes(w)
-			# 	for prefix in prefixSet:
-			# 		prefixes.add(prefix)
-			# print("PREFIXES")
-			# print(prefixes)
+			with open('../data/testText.txt', 'rb') as file:
+				index = 0
+				dictionary = set()
+				for line in file:
+					words = line.split()
+					for word in words:
+						dictionary.add(word)
+			print("DICTONARY")
+			print dictionary
+			prefixes = set()
+			for w in dictionary:
+				prefixSet = getPrefixes(w)
+				for prefix in prefixSet:
+					prefixes.add(prefix)
+			print("PREFIXES")
+			print(prefixes)
 
-			# hmm = buildHmm()
+			hmm = buildHmm()
 
-			# total = len(data.words)
-			# accuracies = []
-			# for word in data.words:
-			# 	data = [e[0] for e in word]
-			# 	labels = [e[1] for e in word]
-			# 	predictions = getPredictions(data)
-			# 	print(predictions[0])
-			# 	lengths = [len(predictions[0])]
-			# 	predictions = [np.argmax(pred) for pred in predictions]
-			# 	print(predictions)
-			# 	X = np.atleast_2d(predictions).T
+			total = len(data.words)
+			accuracies = []
+			for word in data.words:
+				imageD = [e[0] for e in word]
+				labels = [e[1] for e in word]
+				predictions = []
+				for d in imageD:
+					d = d.reshape((1,28,28))
+					prediction = getPredictions(d)
+					predictions.append(prediction)
+				print(predictions[0])
+				lengths = [len(predictions[0])]
+				predictions = [np.argmax(pred) for pred in predictions]
+				print(predictions)
+				X = np.atleast_2d(predictions).T
 
-			# 	decoded = hmm.decode(X)
-			# 	print(decoded)
-			# 	sequence = decoded[1]
-			# 	prediction = []
-			# 	for c in sequence:
-			# 		prediction.append(alphabet[c])
-			# 	print prediction
-			# 	print(labels)
-			# 	accuracies.append(getAccuracy(prediction, labels))
+				decoded = hmm.decode(X)
+				print(decoded)
+				sequence = decoded[1]
+				prediction = []
+				for c in sequence:
+					prediction.append(alphabet[c])
+				print prediction
+				print(labels)
+				accuracies.append(getAccuracy(prediction, labels))
 
-			# print "ACCURACIES"
-			# print(accuracies)
-			# meanAccuracy = np.mean(np.array(accuracies))
-			# print "Mean Accuracy = ", meanAccuracy
+			print "ACCURACIES"
+			print(accuracies)
+			wordAccuracy = np.mean(np.array(accuracies))
+			print "wordAccuracy = ", wordAccuracy
 
+			s = 0
+			total =0
+			for word, acc in zip(data.words, accuracies):
+				l = len(word)
+				s += l*acc
+				total += l
+
+			meanAccuracy = float(s)/total
+			print "meanAccuracy = ", meanAccuracy
 			writer = tf.summary.FileWriter('../graphs', sess.graph)
 			writer.close()
 

@@ -1,29 +1,22 @@
 import tensorflow as tf
 import numpy as np
 import cPickle as pickle # to load object to disk
+import sys 
 from data import Data
-
-
-####################################################
-# Best Results Params:
-# test accuracy: 0.6091
-# additional accuracy: 0.115385
-# WIDTH = HEIGHT = 28
-# AdamOptimizer(1e-5)
-# keep_prob: 0.85
-# range(5000)
-
-####################################################
-
+from data import CUSTOM_GENERATION, DATA_OBJECT_PATHS
 
 WIDTH = 28
 HEIGHT = 28
 
+TRAIN_MODEL = True
+
 def loadData():
 
-    with open('../data/data.pkl', 'rb') as input:
-        dataO = pickle.load(input)
-        return dataO
+	path = DATA_OBJECT_PATHS[CUSTOM_GENERATION]
+	print("loading data at path {}".format(path))
+	with open(path, 'rb') as input:
+		dataO = pickle.load(input)
+		return dataO
 
 def weight_variable(shape):
 	initial = tf.truncated_normal(shape, stddev=0.1)
@@ -63,22 +56,22 @@ def main():
 	h_conv1 = tf.nn.relu(conv2d(x_image, W_conv1) + b_conv1)
 	h_pool1 = max_pool_2x2(h_conv1)
 
-	W_conv2 = weight_variable([5, 5, 32, 64])
-	b_conv2 = bias_variable([64])
+	W_conv2 = weight_variable([5, 5, 32, 128])
+	b_conv2 = bias_variable([128])
 
 	h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2)
 	h_pool2 = max_pool_2x2(h_conv2)
 
-	W_fc1 = weight_variable([(WIDTH/2/2) * (HEIGHT/2/2) * 64, 1024])
-	b_fc1 = bias_variable([1024])
+	W_fc1 = weight_variable([(WIDTH/2/2) * (HEIGHT/2/2) * 128, 4096])
+	b_fc1 = bias_variable([4096])
 
-	h_pool2_flat = tf.reshape(h_pool2, [-1, (WIDTH/2/2)*(HEIGHT/2/2)*64])
+	h_pool2_flat = tf.reshape(h_pool2, [-1, (WIDTH/2/2)*(HEIGHT/2/2)*128])
 	h_fc1 = tf.nn.relu(tf.matmul(h_pool2_flat, W_fc1) + b_fc1)
 
 	keep_prob = tf.placeholder(tf.float32)
 	h_fc1_drop = tf.nn.dropout(h_fc1, keep_prob)
 
-	W_fc2 = weight_variable([1024, 26])
+	W_fc2 = weight_variable([4096, 26])
 	b_fc2 = bias_variable([26])
 
 	y_conv = tf.matmul(h_fc1_drop, W_fc2) + b_fc2
@@ -97,28 +90,37 @@ def main():
 
 		data = loadData()
 
-		sess.run(initializer)
+		if(TRAIN_MODEL):
 
-		for i in range(5000):
-			print("Current Batch Index: {}".format(data.getBatchIndex()))
-			batch = data.nextTrainBatch(50)
-			if i%100 == 0:
-				train_accuracy = accuracy.eval(feed_dict={x:batch[0], y_: batch[1], keep_prob: 1.0})
-				print("step %d, training accuracy %g"%(i, train_accuracy))
+			sess.run(initializer)
 
-			train_step.run(feed_dict={x: batch[0], y_: batch[1], keep_prob: 0.85})
+			for i in range(3000):
+				print("Current Batch Index: {}".format(data.getBatchIndex()))
+				batch = data.nextTrainBatch(50)
+				if i%100 == 0:
+					train_accuracy = accuracy.eval(feed_dict={x:batch[0], y_: batch[1], keep_prob: 1.0})
+					print("step %d, training accuracy %g"%(i, train_accuracy))
 
-		print("test accuracy %g"%accuracy.eval(feed_dict={x: data.testX, y_: data.testY, keep_prob: 1.0}))
+				train_step.run(feed_dict={x: batch[0], y_: batch[1], keep_prob: 0.85})
 
-		print("additional accuracy %g"%accuracy.eval(feed_dict={x: data.additionalX, y_: data.additionalY, keep_prob: 1.0}))
+			testAccuracy = accuracy.eval(feed_dict={x: data.testX, y_: data.testY, keep_prob: 1.0})
 
-		with open('../models/model_best.pkl', 'w') as output:
-			model = cnnModel(W_fc2.eval(), b_fc2.eval())
-			pickle.dump(model, output, pickle.HIGHEST_PROTOCOL)
-			del model
+			print("test accuracy %g"%testAccuracy)
 
-		# Save the variables to disk.
-		save_path = saver.save(sess, "../models/model.ckpt")
+			alphabetAccuracy = accuracy.eval(feed_dict={x: data.alphabetX, y_: data.alphabetY, keep_prob: 1.0})
+
+			print("alphabetAccuracy %g"%alphabetAccuracy)
+
+			handwritingAccuracy = accuracy.eval(feed_dict={x: data.handwritingX, y_: data.handwritingY, keep_prob: 1.0})
+			print("handwritingAccuracy: %g"%handwritingAccuracy)
+
+			# Save the variables to disk.
+			save_path = saver.save(sess, "./../models/model_with_gen_4096_5000.ckpt")
+
+		else:
+			saver.restore(sess, "../models/model_with_gen_4096_5000.ckpt")
+			handwritingAccuracy = accuracy.eval(feed_dict={x: data.handwritingX, y_: data.handwritingY, keep_prob: 1.0})
+			print("handwritingAccuracy: %g"%handwritingAccuracy)
 
 
 if __name__ == "__main__":

@@ -35,7 +35,8 @@ The OCR letters dataset was first obtained here: http://ai.stanford.edu/~btaskar
 | http://www.cs.toronto.edu/~larocheh/publications/NECO-10-09-1100R2-PDF.pdf
 
 """
-
+import sys 
+sys.path.append('..')
 import mlpython.misc.io as mlio
 import numpy as np
 import os
@@ -152,17 +153,22 @@ alphabet = ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q",
 
 alphabetDict = {"a":0,"b":1,"c":2,"d":3,"e":4,"f":5,"g":6,"h":7,"i":8,"j":9,"k":10,"l":11,"m":12,"n":13,"o":14,"p":15,"q":16,"r":17,"s":18,"t":19,"u":20,"v":21,"w":22,"x":23,"y":24,"z":25}
 
-ADDITIONAL_DATA_PATH = "../data/paint_data"
-ALPHABET_DATA_PATH = "../data/formatted_data"
+ALPHABET_DATA_PATH = "../data/paint_data"
+FORMATTED_ALPHABET_DATA_PATH = "../data/formatted_data"
+HANDWRITING_DATA_PATH = "../data/handwritten_data"
 
 IMAGE_WIDTH = 28
 IMAGE_HEIGHT = 28
 
+EXTRA_GENERATED = 3000
+
 RELOAD_DATA = True
 CENTER_IMAGES = False
+CUSTOM_GENERATION = True
 
+DATA_OBJECT_PATHS = {True:'../data/dataWithGen.pkl', False: '../data/data.pkl'}
 
-def cropImage(image):
+def cropImage(image, mode="RGBA"):
     imD = image.load()
     (X, Y) = image.size
     m = np.zeros((X, Y))
@@ -171,18 +177,33 @@ def cropImage(image):
     leftIndex = X
     rightIndex = 0
     bottomIndex = 0
-    for x in range(X):
-        for y in range(Y):
-            if(imD[(x, y)] != (255,255,255,255)):
-                if(topIndex) > y:
-                    topIndex = y
-                if(leftIndex) > x:
-                    leftIndex = x
-                if(rightIndex) < x:
-                    rightIndex = x
-                if(bottomIndex) < y:
-                    bottomIndex = y
-    return image.crop((leftIndex, topIndex, rightIndex, bottomIndex))
+
+    if(mode == "L"):
+        entry = [255]
+    elif(mode == "RGB"):
+        entry = [(255,255,255)]
+    elif(mode == "RGBA"):
+        entry = [(255,255,255,255)]
+    else:
+        print "ERROR IN CROP IMAGE, UNSUPPORTED MODE"
+
+    for x in range(X):   # x is column index
+        col = [imD[(x,row)] for row in xrange(Y)]
+        if(col != entry*Y):
+            if(leftIndex) > x:
+                leftIndex = x
+            if(rightIndex) < x:
+                rightIndex = x
+    for y in range(Y):
+        row = [imD[(col,y)] for col in xrange(X)]
+        if(row != entry*X):
+            if(topIndex) > y:
+                topIndex = y
+            if(bottomIndex) < y:
+                bottomIndex = y
+
+    image = image.crop((max(0,leftIndex-1), max(0,topIndex-1), min(rightIndex+1,X), min(bottomIndex+1,Y)))
+    return image
 
 
 def findCenterOfMass(image):
@@ -205,28 +226,44 @@ def findCenterOfMass(image):
 
     return (cx,cy)
 
+
+def generateTransformedData(data, count):
+    transformedData = []
+    im = Image.fromarray(data)
+    while(count > 0):
+        transformedImage = performRandomTransformation(im).convert("L")
+        # transformedD = imageToData(transformedImage)
+        transformedD = np.array(transformedImage)
+        transformedData.append(transformedD)
+        count = count-1
+    return transformedData
+
+
 def getImageAndLabelFromMLPythonExample(example, save_image=False, center_images=False):
     # example[0] = image array
     # example[1] = image label (int)
-    # print(example)
-    # print int(example[1])
-    # print(alphabet[int(example[1])])
     im = Image.fromarray(np.array(example[0]))
-    im = invertColor(im)
-    im = cropImage(im)
+    im = invertColor(im).convert("L")
+    # im = im.resize((IMAGE_WIDTH, IMAGE_HEIGHT), Image.ANTIALIAS)
+    imD = makeBinaryMatrixFromImage(im)
+    im = Image.fromarray(imD)
+    im = cropImage(im, mode=im.mode)
     im = im.resize((IMAGE_WIDTH, IMAGE_HEIGHT), Image.ANTIALIAS)
+    imD = makeBinaryMatrixFromImage(im)
+    im = Image.fromarray(imD)
     if(center_images):
-        im = recenterImage(im)
+        im = recenterImage(im).convert("L")
     if(save_image):
-        im.save("./Stanford_OCR/"+alphabet[int(example[1])]+".png")
+        im.save("../data/Stanford_OCR/images/"+alphabet[int(example[1])]+".png")
     return im, alphabet[int(example[1])]
 
 def imageToData(image):
     image = setWhiteBackground(image)                       # set white background
     image = cropImage(image)                                # crop
     image = image.resize((IMAGE_WIDTH, IMAGE_HEIGHT), Image.ANTIALIAS)  # resize
-    m = makeBinaryMatrixFromImage(image)                    # make binary image: 1=black
-
+    m = makeBinaryMatrixFromImage(image)                    # make binary image: 0=black
+    image = Image.fromarray(m).convert("L")
+    m = np.array(image)
     return m, image
 
 
@@ -234,7 +271,7 @@ def invertColor(image):
     return ImageOps.invert(image)
 
 
-def loadAdditionalData(dir_path, save_images=False, center_images=False):
+def loadCustomAlphabet(dir_path, save_images=False, center_images=False):
     dir_path = os.path.expanduser(dir_path)
 
     data = []
@@ -248,12 +285,12 @@ def loadAdditionalData(dir_path, save_images=False, center_images=False):
 
         labels.append(fileName)
         if(save_images):
-            savePath = "./formatted_data/"+fileName+".png"
+            savePath = "../data/formatted_data/"+fileName+".png"
             if(center_images):
                 im = recenterImage(im)
-                im = im.convert("RGB").save(savePath)
+                im = im.convert("RGBA").save(savePath)
             else:
-                im = im.convert("RGB").save(savePath)
+                im = im.convert("RGBA").save(savePath)
     return data,labels
 
 def loadFormattedCustomAlphabet(dir_path):
@@ -265,11 +302,50 @@ def loadFormattedCustomAlphabet(dir_path):
     for filePath in glob.glob(dir_path +"/*.png"):
         fileName = filePath.split(".png")[0].split("/")[-1]
         image = Image.open(filePath)
-        imageData = makeBinaryMatrixFromImage(image)               # make binary image: 1=black
+        imageData = makeBinaryMatrixFromImage(image)               # make binary image: 0=black
+        im = Image.fromarray(imageData).convert("L")
+        imageData = np.array(im)
         data.append(imageData)
-
         labels.append(fileName)
     return data,labels
+
+
+def is_formatted(fileName):
+    return not fileName.startswith("1")
+
+def is_image(fileName):
+    return fileName.split(".")[1] == "png"
+
+def is_dir(dirName):
+    return len(dirName.split(".")) == 1
+
+def loadFormattedCustomHandwriting(dir_path):
+    data = []
+    words = []
+    labels = []
+    for sentDirName in os.listdir(dir_path):
+        if(is_dir(sentDirName)):
+            for wordDirName in os.listdir(os.path.join(dir_path, sentDirName)):
+                if(is_dir(wordDirName)):
+                    wordDirPath = os.path.join(os.path.join(dir_path, sentDirName),wordDirName)
+                    word_temp = {}
+                    for fileName in os.listdir(wordDirPath):
+                        if(is_image(fileName) and is_formatted(fileName)):
+                            fullpath = os.path.join(os.path.join(os.path.join(dir_path, sentDirName),wordDirName),fileName)
+                            image = Image.open(fullpath)
+                            imageData = makeBinaryMatrixFromImage(image)
+                            image = Image.fromarray(imageData).convert("L")
+                            imageData = np.array(image)
+                            data.append(imageData)
+                            labels.append(fileName.split("_")[0])
+                            word_temp[fileName.split("_")[0]] = imageData
+                    word = []
+                    for index, c in enumerate(wordDirName.split("_")[0]):
+                        word.append((word_temp[c], c))
+                    words.append(word)
+    return data, labels, words
+
+
 
 
 def makeBinaryMatrixFromImage(image):
@@ -279,10 +355,10 @@ def makeBinaryMatrixFromImage(image):
     for i in range(A.shape[0]):
         for j in range(A.shape[1]):
             if A[i][j] == True:
-                bwA[i][j] = 0
+                bwA[i][j] = 255
             else:
-                bwA[i][j] = 1
-    return bwA
+                bwA[i][j] = 0
+    return bwA.astype('uint8')
 
 def makeOneHotVectors(labels):
     vectors = []
@@ -293,20 +369,61 @@ def makeOneHotVectors(labels):
         vectors.append(vec)
     return vectors
 
+def performRandomTransformation(image):
+    # transformation is either : stretch or rotate or both
+    if image.mode == "L":
+        black = 0
+    elif image.mode == "RGB":
+        black = (0,0,0)
+    elif image.mode == "RGBA":
+        black = (0,0,0,0)
+    else:
+        "ERROR IN performRandomTransformation, UNSUPPORTED mode"
+        return
+    image = invertColor(image)
+    canvas = Image.new(image.mode, (image.size[0]*2,image.size[1]*2), black)
+    canvas.paste(image, (canvas.size[0]/2, canvas.size[0]/2))
+    image = canvas
+    transformType = random.randint(1,3)
+    if(transformType == 1): # stretch / shrink
+        a = float(random.randint(100,300))/float(100)
+        e = float(random.randint(100,300))/float(100)
+        transformed = image.transform(image.size, Image.AFFINE, (a,0,0,0,e,0))
+        transformed = invertColor(transformed)
+        transformed = cropImage(transformed, mode=transformed.mode).resize((IMAGE_WIDTH, IMAGE_HEIGHT), Image.ANTIALIAS)
+        transformedD = makeBinaryMatrixFromImage(transformed)
+        transformed = Image.fromarray(transformedD)
+        return transformed
+    elif(transformType == 2): #rotate
+        rotation = random.randint(-25,25)
+        transformed = image.rotate(rotation)
+        transformed = invertColor(transformed)
+        transformed = cropImage(transformed, mode=transformed.mode).resize((IMAGE_WIDTH, IMAGE_HEIGHT), Image.ANTIALIAS)
+        transformedD = makeBinaryMatrixFromImage(transformed)
+        transformed = Image.fromarray(transformedD)
+        return transformed
+    else:
+        a = float(random.randint(100,300))/float(100)
+        e = float(random.randint(100,300))/float(100)
+        transformed = image.transform(image.size, Image.AFFINE, (a,0,0,0,e,0))
+        rotation = random.randint(-25,25)
+        transformed = transformed.rotate(rotation)
+        transformed = invertColor(transformed)
+        transformed = cropImage(transformed, mode=transformed.mode).resize((IMAGE_WIDTH, IMAGE_HEIGHT), Image.ANTIALIAS)
+        transformedD = makeBinaryMatrixFromImage(transformed)
+        transformed = Image.fromarray(transformedD)
+        return transformed
+
+
 def recenterImage(image):
     (cx, cy) = findCenterOfMass(image)
     im = shiftImageCenterToPoint(image, (int(cx), int(cy)), (int(IMAGE_WIDTH/2),int(IMAGE_HEIGHT/2)))
     return im
 
 def setWhiteBackground(image):
-    A = np.array(image)
-    for x in xrange(A.shape[0]):
-        for y in xrange(A.shape[1]):
-            if A[x][y][3] < 10 :
-                A[x][y] = [255,255,255,255]
-    image = Image.fromarray(A)
-    return image
-
+    canvas = Image.new('RGBA', image.size, (255,255,255,255))
+    canvas.paste(image, mask=image)
+    return canvas
 
 def shiftImageCenterToPoint(image, (cx,cy), (px,py)):
     imD = image.load()
@@ -339,13 +456,33 @@ class Data:
         self.testX = testX
         self.testY = testY
         self.test = [testX, testY]
-        self.additionalX = []
-        self.additionalY = []
+        self.alphabetX = []
+        self.alphabetY = []
+        self.handwritingX = []
+        self.handwritingY = []
+        self.customX = []
+        self.customY = []
+        self.words = []
         self.batchIndex = 0
 
-    def addAdditionData(self, additionalX, additionalY):
-        self.additionalX = additionalX
-        self.additionalY = additionalY
+    def addAlphabet(self, alphabetX, alphabetY):
+        self.alphabetX = alphabetX
+        self.alphabetY = alphabetY
+
+    def addAdditionalData(self, additionalX, additionalY):
+        self.trainX.extend(additionalX)
+        self.trainY.extend(additionalY)
+
+    def addCustomData(self, customX, customY):
+        self.customX = customX
+        self.customY = customY
+
+    def addHandwritingData(self, handwritingX, handwritingY):
+        self.handwritingX = handwritingX
+        self.handwritingY = handwritingY
+
+    def addWordsData(self, words):
+        self.words = words
 
     def nextTrainBatch(self, size):
         if(self.batchIndex+size >= len(self.trainX)):
@@ -406,11 +543,6 @@ class Data:
         self.trainX = shuffledX
         self.trainY = shuffledY
 
-    def generateTransformedData(data, counts):
-
-        for d, count in zip(data,counts):
-            
-
 
 
 def main():
@@ -432,7 +564,7 @@ def main():
             # example[0] = image array
             # example[1] = image label (int)
             print("Processing Image ", count+1)
-            im, label = getImageAndLabelFromMLPythonExample(example, save_image=False, center_images=CENTER_IMAGES)
+            im, label = getImageAndLabelFromMLPythonExample(example, save_image=True, center_images=CENTER_IMAGES)
             trainImages.append(im)
             trainLabels.append(label)
             count+=1
@@ -450,27 +582,81 @@ def main():
             testLabels.append(label)
             count+=1
 
-        # additionalData, additionalLabels = loadAdditionalData(ALPHABET_DATA_PATH, save_images=True, center_images=CENTER_IMAGES)
-        additionalData, additionalLabels = loadFormattedCustomAlphabet(ALPHABET_DATA_PATH)
+        # alphabetX, alphabetLabels = loadCustomAlphabet(ALPHABET_DATA_PATH, save_images=True, center_images=CENTER_IMAGES)
+        alphabetX, alphabetLabels = loadFormattedCustomAlphabet(FORMATTED_ALPHABET_DATA_PATH)
 
-        trainX = [np.array(image) for image in trainImages]
+
+        handwritingX, handwritingLabels, words = loadFormattedCustomHandwriting(HANDWRITING_DATA_PATH)
+
+        trainX = [np.array(image.convert("L")) for image in trainImages]
         trainY = makeOneHotVectors(trainLabels)
-        testX = [np.array(image) for image in testImages]
+        testX = [np.array(image.convert("L")) for image in testImages]
         testY = makeOneHotVectors(testLabels)
 
-        additionalY = makeOneHotVectors(additionalLabels)
+        alphabetY = makeOneHotVectors(alphabetLabels)
+        handwritingY = makeOneHotVectors(handwritingLabels)
 
-        with open('../data/data.pkl', 'w') as output:
+        with open(DATA_OBJECT_PATHS[CUSTOM_GENERATION], 'w') as output:
             dataO = Data(trainX, trainY, testX, testY)
             dataO.balanceDataClasses()
-            dataO.addAdditionData(additionalData, additionalY)
+            dataO.addAlphabet(alphabetX, alphabetY)
+            if(CUSTOM_GENERATION):
+                customData = []
+                customLabels = []
+                for letterD, label in zip(dataO.alphabetX, dataO.alphabetY):
+                    newData = generateTransformedData(letterD, EXTRA_GENERATED)
+                    newLabels = [label for d in newData]
+                    customData.extend(newData)
+                    customLabels.extend(newLabels)
+                dataO.addAdditionalData(customData, customLabels)
+                dataO.addCustomData(customData, customLabels)
+            dataO.addWordsData(words)
             dataO.shuffleTrainData()
+            dataO.addHandwritingData(handwritingX, handwritingY)
             pickle.dump(dataO, output, pickle.HIGHEST_PROTOCOL)
             del dataO
 
         print "################################"
         print "Done in data.py"
         print "################################"
+
+    else:
+        path = DATA_OBJECT_PATHS[not CUSTOM_GENERATION] #open non-custom data
+        print("loading data at path {}".format(path))
+        with open(path, 'rb') as input:
+            dataO = pickle.load(input)
+
+            if(CUSTOM_GENERATION):
+                customData = []
+                customLabels = []
+                for letterD, label in zip(dataO.alphabetX, dataO.alphabetY):
+                    newData = generateTransformedData(letterD, EXTRA_GENERATED)
+                    newLabels = [label for d in newData]
+                    customData.extend(newData)
+                    customLabels.extend(newLabels)
+                dataO.addAdditionalData(customData, customLabels)
+                dataO.addCustomData(customData, customLabels)
+                dataO.shuffleTrainData()
+
+                with open(DATA_OBJECT_PATHS[CUSTOM_GENERATION], 'w') as output:
+                    pickle.dump(dataO, output, pickle.HIGHEST_PROTOCOL)
+                    print "saved at {}".format(DATA_OBJECT_PATHS[CUSTOM_GENERATION])
+
+                print "######################DONE ADDING############################"
+            trainExample = Image.fromarray(dataO.trainX[1])
+            testExample = Image.fromarray(dataO.testX[1])
+            alphabetExample = Image.fromarray(dataO.alphabetX[1])
+            handwritingExample = Image.fromarray(dataO.handwritingX[1])
+            customExample = Image.fromarray(dataO.customX[8000])
+            print(dataO.customY[3])
+            r = performRandomTransformation(customExample)
+
+            trainExample.save("../data/examples/trainExample.png")
+            testExample.save("../data/examples/testExample.png")
+            alphabetExample.save("../data/examples/alphabetExample.png")
+            handwritingExample.save("../data/examples/handwritingExample.png")
+            customExample.save("../data/examples/customExample.png")
+            r.save("../data/examples/random.png")
 
 
 if __name__ == "__main__":
