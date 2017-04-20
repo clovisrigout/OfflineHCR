@@ -1,5 +1,12 @@
-ML Project for Offline Handwriting Recognition
+ML Project for Offline Targeted Handwriting Recognition:
+
+COMP 652 Final Project
+McGill University
+
+Machine Learning Architecture built to recognize a specific handwriting style, achieving over 90% accuracy.
 
 Dependencies needed :
 	- mlpython : hg clone https://bitbucket.org/HugoLarochelle/mlpython (http://www.dmi.usherb.ca/~larocheh/mlpython/install.html)
-	- email_results : https://github.com/TRSKY/email_me_results
+	- tensorflow, numpy, scikit, nltk
+
+

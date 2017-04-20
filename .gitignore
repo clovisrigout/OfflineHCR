@@ -1,6 +1,4 @@
 mlpython/
 graphs/*.local
-papers/
-data/
+data/*.pkl
 models/
-email_me_results

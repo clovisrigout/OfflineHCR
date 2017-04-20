@@ -1,0 +1,12 @@
+hello my name is clovis
+the goal of this algorithm is to recognize your handwriting
+while many algorithms do this quite well online this algorithm works offline
+we disregard the issue of segmentation and thus assume words taken as inputs are already segmented in characters
+
+we trained a convolutional neural network with the stanford OCR dataset
+we the strongly bias this network by training it with distorted variations of an alphabet of twenty siz characters
+the input is a word split up into characters
+the first step of the algorithm consists in feeding the sequence of characters to a convolutional neural network one character at a time
+the output of the neural network is then fed into a hidden markov
+the hidden markov model is used to consider the probabilistic distribution of sequences of characters in words
+as each character in a word in processed the most probably sequence of characters in outputed by the hmm
